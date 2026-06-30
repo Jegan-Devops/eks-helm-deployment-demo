@@ -1,0 +1,35 @@
+# Default values for demo-app.
+# Override any of these at install time with: helm install demo-app . -f my-values.yaml
+
+replicaCount: 2
+
+image:
+  repository: nginxdemos/hello   # public demo image — swap for your own ECR image in real use
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  host: demo-app.example.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70

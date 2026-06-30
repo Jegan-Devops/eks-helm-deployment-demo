@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-demo-app
+  labels:
+    app: {{ .Release.Name }}-demo-app
+spec:
+  # replicaCount is ignored once autoscaling.enabled is true — HPA takes over scaling.
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-demo-app
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-demo-app
+    spec:
+      containers:
+        - name: demo-app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 80
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # readiness/liveness probes are what give zero-downtime rolling deployments —
+          # Kubernetes won't route traffic to a pod, or won't kill the old one, until these pass
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
