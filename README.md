@@ -1,113 +1,113 @@
 # EKS + Helm Deployment Demo
 
-A complete pattern for provisioning an Amazon EKS cluster with Terraform and
-deploying an application onto it with a reusable Helm chart — the same
-combination I used in production to manage 50+ containerized applications
-with zero-downtime deployments.
+A fully automated pattern for provisioning an Amazon EKS cluster with
+Terraform and deploying an application onto it via a reusable Helm chart —
+the same combination used in production to manage **50+ containerized
+applications** with zero-downtime rolling deployments.
 
 ## Problem
 
-Running containers in Kubernetes is one thing; running them on a *managed*,
-production-grade EKS cluster with proper IAM separation, autoscaling, and
-load-balancer integration is a different, more involved problem. Doing this
-by hand in the console isn't repeatable or auditable.
+Running containers on EKS requires more than just `kubectl apply` — you
+need IAM roles separated between control plane and worker nodes, an OIDC
+provider for in-cluster AWS authentication (IRSA), and a Load Balancer
+Controller to actually provision ALBs from Ingress objects. Setting this up
+manually is not repeatable.
 
 ## Solution
 
-This repo splits the work into two reusable pieces:
+Everything is automated in a single `terraform apply`:
 
-1. **`terraform-eks-cluster/`** — provisions the EKS control plane, a managed
-   node group, and the VPC/subnet/IAM scaffolding EKS needs, with subnets
-   tagged so the AWS Load Balancer Controller can auto-discover them.
-2. **`helm-chart/demo-app/`** — a parameterized Helm chart that deploys a
-   sample app with readiness/liveness probes (for zero-downtime rolling
-   updates), a Horizontal Pod Autoscaler, and an ALB Ingress.
+- **EKS cluster** with managed node group across 2 AZs
+- **OIDC provider** — enables IRSA (IAM Roles for Service Accounts)
+- **AWS Load Balancer Controller** — installed via Terraform's Helm provider,
+  authenticated via IRSA, creates real internet-facing ALBs from `Ingress` objects automatically
+- **Helm chart** — parameterized Deployment, Service, Ingress (ALB), and HPA
 
 ## Architecture
 
 ```
 Terraform ──▶ EKS Control Plane + Managed Node Group (2 AZs)
               │
-              ├──▶ OIDC Provider (enables IRSA)
-              │         │
-              │         ▼
-              └──▶ IAM Role ──▶ K8s ServiceAccount ──▶ Helm-installed
-                                                        AWS Load Balancer
-                                                        Controller
-                          │
-                          ▼
-                 Helm install demo-app
-                          │
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-   Deployment          Service            Ingress
-   (2-6 pods,         (ClusterIP)     (real ALB, created
-    HPA-scaled)                       automatically by
-                                       the controller above)
+              ├──▶ OIDC Provider
+              │         └──▶ IAM Role (IRSA) ──▶ LB Controller ServiceAccount
+              │
+              └──▶ Helm: AWS Load Balancer Controller (kube-system)
+                              │
+                   Helm: demo-app
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         Deployment        Service        Ingress (real ALB)
+         (2-6 pods,       (ClusterIP)    internet-facing,
+          HPA-scaled)                    auto-provisioned
 ```
 
 ## Tech Used
 
-Terraform, Amazon EKS, Helm (both as CLI and as a Terraform provider), Kubernetes
-(Deployment/Service/Ingress/HPA), AWS IAM (IRSA/OIDC), AWS Load Balancer Controller
+Terraform · Amazon EKS · Helm · Kubernetes · AWS IAM (IRSA/OIDC) · ALB · HPA
 
 ## Usage
 
-**Everything below is provisioned by a single `terraform apply`** — the EKS
-cluster, the OIDC provider, the IAM role, and the AWS Load Balancer
-Controller itself are all created in one pass. No manual `eksctl` or `helm
-install` commands required.
-
 ```bash
+# 1. Provision cluster + OIDC + IAM + LB controller — everything in one apply
 cd terraform-eks-cluster
 terraform init
 terraform apply
+
+# 2. Configure kubectl
 aws eks update-kubeconfig --region ap-south-1 --name demo-eks-cluster
 
-# confirm the controller came up automatically
-kubectl get pods -n kube-system | grep aws-load-balancer-controller
-```
-
-**2. Deploy the app with Helm:**
-```bash
+# 3. Deploy app via Helm
 cd ../helm-chart
 helm install demo-release ./demo-app
-kubectl get pods
-kubectl get ingress -w   # wait ~1-2 min for a real ALB address to appear
+
+# 4. Wait for real ALB address
+kubectl get ingress -w
+
+# 5. Test
+curl -H "Host: demo-app.example.com" http://<alb-address>
 ```
 
-**3. Verify the real ALB is live:**
-```bash
-curl -H "Host: demo-app.example.com" http://<alb-address-from-above>
-```
+## Proof of Deployment
 
-**4. Verify autoscaling is wired up:**
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-kubectl get hpa
-```
+### Nodes ready and pods running
+![Nodes and Pods](docs/screenshots/Nodes_and_Pods_running-Terminal.png)
 
-## Notes
+### HPA active with metrics
+![HPA](docs/screenshots/HPA_Metrics_enabled-Terminal.png)
 
-This is a sanitized, standalone version of the cluster/Helm pattern I built
-professionally, using a public demo image (`nginxdemos/hello`) instead of
-real application code. In production, `image.repository` would point to a
-private ECR repo built by the CI/CD pipeline (see the
-`cicd-jenkins-github-actions` project).
+### Helm release installed
+![Helm Status](docs/screenshots/Helm_installed-Terminal.png)
 
-The AWS Load Balancer Controller install is fully automated via Terraform's
-`kubernetes` and `helm` providers (`lb-controller.tf`) — this demonstrates
-IRSA (IAM Roles for Service Accounts), the modern pattern for giving
-Kubernetes workloads scoped AWS permissions without static credentials.
+### LB Controller running in kube-system
+![LB Controller](docs/screenshots/LoadBalancer_controller_and_Helm_status-Terminal.png)
+
+### Real ALB provisioned automatically
+![ALB Console](docs/screenshots/ALB-Console.png)
+
+### Ingress ALB URL tested successfully
+![ALB Test](docs/screenshots/Ingress_ALB_Url_Tested-Terminal.png)
+
+### EKS Cluster active in console
+![EKS Console](docs/screenshots/EKS_Cluster-Console.png)
+
+### VPC and networking
+![VPC](docs/screenshots/VPC-Console.png)
+
+### Terraform resources created
+![Terraform Apply](docs/screenshots/Terraform_resources_created-Terminal.png)
+
+## Key Design Decisions
+
+- **IRSA over static credentials**: the LB Controller uses a Kubernetes service account annotated with an IAM role ARN — no AWS access keys stored anywhere in the cluster
+- **Subnet tagging** (`kubernetes.io/role/elb`): without these tags the controller cannot discover which subnets to place ALBs into
+- **Managed node group** over self-managed: AWS handles patching and replacement of worker nodes, matching how this was run in production
+- **`lifecycle { ignore_changes = [task_definition] }`**: Terraform manages the cluster, Helm manages the app — clean separation of concerns
 
 ## Cleanup
 
-Order matters: delete the app's Ingress first so the controller deletes the
-real ALB, **then** destroy the Terraform-managed infrastructure (which
-includes uninstalling the controller itself).
-
 ```bash
-helm uninstall demo-release          # deletes the Ingress -> controller removes the ALB
-cd ../terraform-eks-cluster
-terraform destroy
+helm uninstall demo-release    # controller removes the ALB
+sleep 30
+cd ../terraform-eks-cluster && terraform destroy
 ```
